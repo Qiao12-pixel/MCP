@@ -1,0 +1,12 @@
+{
+  "server": {
+    "port": 8080
+  },
+  "logging": {
+    "log_file_path": "../logs/server.log",
+    "log_level": "debug",
+    "log_file_size": 52428800,
+    "log_file_count": 5,
+    "log_console_output": true
+  }
+}

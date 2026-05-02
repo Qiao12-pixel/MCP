@@ -1,0 +1,11 @@
+[requires]
+spdlog/1.13.0
+nlohmann_json/3.11.3
+cpp-httplib/0.15.3
+libcurl/8.6.0
+gtest/1.14.0
+[generators]
+CMakeDeps
+CMakeToolchain
+[layout]
+cmake_layout

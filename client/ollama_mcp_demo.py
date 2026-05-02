@@ -10,6 +10,8 @@ import sys
 import threading
 
 MAX_TOOL_STEPS = 8
+MCP_PROTOCOL_VERSION = "2024-11-05"
+SSE_CONNECT_TIMEOUT_SECONDS = 5
 
 # ==========================================
 # MCP Client
@@ -26,13 +28,19 @@ class McpClient:
         def monitor():
             url = f"{self.base_url}/sse/tool_calls"
             try:
-                response = requests.get(url, stream=True, timeout=None)
+                response = requests.get(
+                    url,
+                    stream=True,
+                    timeout=(SSE_CONNECT_TIMEOUT_SECONDS, None)
+                )
+                response.raise_for_status()
                 for line in response.iter_lines(decode_unicode=True):
                     if not self.sse_running:
                         break
-                    if line and line.startswith('data: '):
+                    data_line = parse_sse_data_line(line)
+                    if data_line is not None:
                         try:
-                            data = json.loads(line[6:])
+                            data = json.loads(data_line)
                             event_type = data.get("type", "unknown")
                             if event_type == "tool_call_start":
                                 print(f"\n🔧 [SSE] 调用工具: {data['tool']}", flush=True)
@@ -78,7 +86,7 @@ class McpClient:
 
     def initialize(self):
         return self._send_request("initialize", {
-            "protocolVersion": "2025-03-26",
+            "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {
                 "name": "ollama-mcp-demo",
@@ -148,6 +156,13 @@ def build_ollama_tools(tools):
     return ollama_tools
 
 
+def parse_sse_data_line(line):
+    """解析 SSE data 行；data: 后的空格按协议是可选的。"""
+    if not line or not line.startswith("data:"):
+        return None
+    return line[5:].lstrip(" ")
+
+
 def normalize_tool_arguments(arguments):
     """Ollama 的 arguments 通常是 dict，但部分模型可能返回 JSON 字符串。"""
     if isinstance(arguments, str):
@@ -162,9 +177,18 @@ def extract_tool_text(tool_result):
     return "\n".join(item.get("text", "") for item in content if item.get("text"))
 
 
+def ensure_tool_call_id(tool_call, step, index):
+    """OpenAI 兼容工具结果需要用 tool_call_id 关联到对应调用。"""
+    tool_call_id = tool_call.get("id")
+    if not tool_call_id:
+        tool_call_id = f"call_{step}_{index}"
+        tool_call["id"] = tool_call_id
+    return tool_call_id
+
+
 def run_tool_workflow(ollama, mcp, messages, ollama_tools):
     """循环执行模型请求的工具，直到模型返回最终文本回复。"""
-    for _ in range(MAX_TOOL_STEPS):
+    for step in range(MAX_TOOL_STEPS):
         response = ollama.chat(messages, tools=ollama_tools)
         message = response.get("message", {})
         tool_calls = message.get("tool_calls") or []
@@ -176,7 +200,8 @@ def run_tool_workflow(ollama, mcp, messages, ollama_tools):
 
         messages.append(message)
 
-        for tool_call in tool_calls:
+        for index, tool_call in enumerate(tool_calls):
+            tool_call_id = ensure_tool_call_id(tool_call, step, index)
             function = tool_call.get("function", {})
             function_name = function.get("name")
             function_args = normalize_tool_arguments(function.get("arguments"))
@@ -189,6 +214,7 @@ def run_tool_workflow(ollama, mcp, messages, ollama_tools):
 
             messages.append({
                 "role": "tool",
+                "tool_call_id": tool_call_id,
                 "name": function_name,
                 "content": tool_output
             })

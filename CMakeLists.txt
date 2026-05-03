@@ -57,6 +57,8 @@ add_library(mcp_jsonrpc
         mcp/mcp_server.h
         src/json_rpc/http_jsonrpc.cpp
         src/json_rpc/http_jsonrpc.h
+        src/utils/thread_pool.cpp
+        src/utils/thread_pool.h
 )
 
 target_include_directories(mcp_jsonrpc PUBLIC
@@ -113,6 +115,15 @@ target_link_libraries(jsonrpc_tests PRIVATE
         GTest::gtest_main
 )
 
+add_executable(thread_pool_tests
+        tests/thread_pool_test.cpp
+)
+
+target_link_libraries(thread_pool_tests PRIVATE
+        mcp_jsonrpc
+        GTest::gtest_main
+)
+
 add_executable(mcp_types_tests
         tests/mcp_types_test.cpp
 )
@@ -144,6 +155,7 @@ include(GoogleTest)
 gtest_discover_tests(config_tests)
 gtest_discover_tests(logger_tests)
 gtest_discover_tests(jsonrpc_tests)
+gtest_discover_tests(thread_pool_tests)
 gtest_discover_tests(mcp_types_tests)
 gtest_discover_tests(mcp_server_tests)
 gtest_discover_tests(http_jsonrpc_tests)

@@ -38,7 +38,11 @@ class McpClient:
                     if not self.sse_running:
                         break
                     data_line = parse_sse_data_line(line)
-                    if data_line is not None:
+                    # if data_line is not None:
+                    # SSE 协议中允许出现空的 data: 行（例如仅包含 data:\n\n），此时 parse_sse_data_line 会返回空字符串 ""。
+                    # 直接对空字符串调用 json.loads() 会抛出 JSONDecodeError 并在日志中产生解析错误。
+                    # 使用 if data_line: 可以更优雅地过滤掉 None 和空字符串，提高代码的健壮性。
+                    if data_line :
                         try:
                             data = json.loads(data_line)
                             event_type = data.get("type", "unknown")

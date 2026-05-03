@@ -38,6 +38,10 @@ TEST(ConfigTest, LoadsCompleteConfigAndReturnsConfiguredValues) {
             "log_file_size": 4096,
             "log_file_count": 7,
             "log_console_output": false
+        },
+        "thread_pool": {
+            "size": 3,
+            "max_queue_size": 9
         }
     })");
 
@@ -51,6 +55,8 @@ TEST(ConfigTest, LoadsCompleteConfigAndReturnsConfiguredValues) {
     EXPECT_EQ(config.GetLogFileSize(), 4096);
     EXPECT_EQ(config.GetLogFileCount(), 7);
     EXPECT_FALSE(config.GetLogConsoleOutput());
+    EXPECT_EQ(config.GetThreadPoolSize(), 3);
+    EXPECT_EQ(config.GetThreadPoolMaxQueueSize(), 9);
 }
 
 TEST(ConfigTest, LoadsServerJsonFromProjectConfigDirectory) {
@@ -66,6 +72,8 @@ TEST(ConfigTest, LoadsServerJsonFromProjectConfigDirectory) {
     EXPECT_EQ(config.GetLogFileSize(), 52428800);
     EXPECT_EQ(config.GetLogFileCount(), 5);
     EXPECT_TRUE(config.GetLogConsoleOutput());
+    EXPECT_EQ(config.GetThreadPoolSize(), 4);
+    EXPECT_EQ(config.GetThreadPoolMaxQueueSize(), 128);
 }
 
 TEST(ConfigTest, UsesDefaultsWhenSectionsOrFieldsAreMissing) {
@@ -80,6 +88,8 @@ TEST(ConfigTest, UsesDefaultsWhenSectionsOrFieldsAreMissing) {
     EXPECT_EQ(config.GetLogFileSize(), 10 * 1024 * 1024);
     EXPECT_EQ(config.GetLogFileCount(), 5);
     EXPECT_TRUE(config.GetLogConsoleOutput());
+    EXPECT_EQ(config.GetThreadPoolSize(), 4);
+    EXPECT_EQ(config.GetThreadPoolMaxQueueSize(), 128);
 }
 
 TEST(ConfigTest, ReturnsFalseForMissingFile) {
@@ -148,6 +158,26 @@ TEST(ConfigTest, RejectsNonPositiveLogFileCount) {
     const auto path = WriteTempConfig(R"({
         "logging": {
             "log_file_count": 0
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsZeroThreadPoolSize) {
+    const auto path = WriteTempConfig(R"({
+        "thread_pool": {
+            "size": 0
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsZeroThreadPoolMaxQueueSize) {
+    const auto path = WriteTempConfig(R"({
+        "thread_pool": {
+            "max_queue_size": 0
         }
     })");
 

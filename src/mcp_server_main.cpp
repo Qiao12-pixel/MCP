@@ -453,6 +453,8 @@ void SetMcpServer(McpServer& mcp) {
 //initialize
 jsonrpc::JsonRpcDispatcher CreateDispatcher(McpServer& mcp_server) {
     jsonrpc::JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(config::MCP_CONFIG.GetThreadPoolSize(),
+                                config::MCP_CONFIG.GetThreadPoolMaxQueueSize());
     dispatcher.RegisterHandler("initialize", [&mcp_server](const json& /*param*/)->json {
         MCP_LOG_INFO("Initializing MCP server");
         return mcp_server.GetInitializationResult().to_json();
@@ -683,8 +685,6 @@ int main(int argc, char* argv[]) {
     MCP_LOG_SHUTDOWN();
     return 0;
 }
-
-
 
 
 

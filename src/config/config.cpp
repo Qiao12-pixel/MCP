@@ -74,6 +74,18 @@ namespace mcp {
             } if (!logging.contains("log_console_output")) {
                 logging["log_console_output"] = true;
             }
+
+            //set thread pool default
+            if (!m_config_data_.contains("thread_pool")) {
+                m_config_data_["thread_pool"] = json::object();
+            }
+            auto& thread_pool = m_config_data_["thread_pool"];
+            if (!thread_pool.contains("size")) {
+                thread_pool["size"] = 4;
+            }
+            if (!thread_pool.contains("max_queue_size")) {
+                thread_pool["max_queue_size"] = 128;
+            }
         }
         bool Config::ValidateConfig() const {
             //Check server require
@@ -106,6 +118,19 @@ namespace mcp {
                 int log_file_count = m_config_data_["logging"].value("log_file_count", 5);
                 if (log_file_count <= 0) {
                     std::cerr << "log_file_count must be greater than 0" << std::endl;
+                    return false;
+                }
+            }
+
+            if (m_config_data_.contains("thread_pool")) {
+                size_t thread_pool_size = m_config_data_["thread_pool"].value("size", 4);
+                if (thread_pool_size == 0) {
+                    std::cerr << "thread_pool.size must be greater than 0" << std::endl;
+                    return false;
+                }
+                size_t max_queue_size = m_config_data_["thread_pool"].value("max_queue_size", 128);
+                if (max_queue_size == 0) {
+                    std::cerr << "thread_pool.max_queue_size must be greater than 0" << std::endl;
                     return false;
                 }
             }
@@ -147,6 +172,14 @@ namespace mcp {
 
         bool Config::GetLogConsoleOutput() const {
             return m_config_data_["logging"].value("log_console_output", true);
+        }
+
+        size_t Config::GetThreadPoolSize() const {
+            return m_config_data_["thread_pool"].value("size", 4);
+        }
+
+        size_t Config::GetThreadPoolMaxQueueSize() const {
+            return m_config_data_["thread_pool"].value("max_queue_size", 128);
         }
 
         // ===================================================================

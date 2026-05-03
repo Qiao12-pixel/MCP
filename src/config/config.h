@@ -30,6 +30,8 @@ namespace mcp {
             size_t GetLogFileSize() const;
             int GetLogFileCount() const;
             bool GetLogConsoleOutput() const;
+            size_t GetThreadPoolSize() const;
+            size_t GetThreadPoolMaxQueueSize() const;
             /**
              * 可扩展获取其他字段方法，具体字段查看config/server.json
              */

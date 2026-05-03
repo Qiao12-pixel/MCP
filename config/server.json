@@ -8,5 +8,9 @@
     "log_file_size": 52428800,
     "log_file_count": 5,
     "log_console_output": true
+  },
+  "thread_pool": {
+    "size": 4,
+    "max_queue_size": 128
   }
 }

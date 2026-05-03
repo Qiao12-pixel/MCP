@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <sstream>
+#include <thread>
 #include <string>
 #include <utility>
 
@@ -46,6 +47,18 @@ protected:
     void SetUp() override {
         mcp::logger::Logger::GetInstance().Shutdown();
         mcp::logger::Logger::GetInstance().Init("jsonrpc_test", "", 1024 * 1024, 3, false);
+    }
+
+    void TearDown() override {
+        mcp::logger::Logger::GetInstance().Shutdown();
+    }
+};
+
+class JsonRpcDispatcherTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        mcp::logger::Logger::GetInstance().Shutdown();
+        mcp::logger::Logger::GetInstance().Init("jsonrpc_dispatcher_test", "", 1024 * 1024, 3, false);
     }
 
     void TearDown() override {
@@ -136,7 +149,7 @@ TEST(JsonRpcSerializationTest, ResponseFromJsonClearsStaleAlternativesWhenReused
     EXPECT_FALSE(response.result.has_value());
 }
 
-TEST(JsonRpcDispatcherTest, DispatchesRegisteredHandler) {
+TEST_F(JsonRpcDispatcherTest, DispatchesRegisteredHandler) {
     JsonRpcDispatcher dispatcher;
     dispatcher.RegisterHandler("add", [](const json& params) {
         return params.at("a").get<int>() + params.at("b").get<int>();
@@ -146,11 +159,56 @@ TEST(JsonRpcDispatcherTest, DispatchesRegisteredHandler) {
     EXPECT_EQ(dispatcher.Call("add", json{{"a", 2}, {"b", 3}}), 5);
 }
 
-TEST(JsonRpcDispatcherTest, ThrowsForUnknownMethod) {
+TEST_F(JsonRpcDispatcherTest, ThrowsForUnknownMethod) {
     JsonRpcDispatcher dispatcher;
 
     EXPECT_FALSE(dispatcher.HasHandler("missing"));
     EXPECT_THROW(dispatcher.Call("missing", json::object()), std::runtime_error);
+}
+
+TEST_F(JsonRpcDispatcherTest, RunsSlowMethodsInThreadPoolWhenEnabled) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 8);
+    const auto caller_thread_id = std::this_thread::get_id();
+    const std::vector<std::string> slow_methods = {
+            "tools/call",
+            "resources/read",
+            "prompts/get"
+    };
+
+    for (const auto& method : slow_methods) {
+        std::thread::id handler_thread_id;
+        dispatcher.RegisterHandler(method, [&handler_thread_id](const json&) {
+            handler_thread_id = std::this_thread::get_id();
+            return json{{"ok", true}};
+        });
+
+        EXPECT_EQ(dispatcher.Call(method, json::object()).at("ok"), true);
+        EXPECT_NE(handler_thread_id, caller_thread_id) << method;
+    }
+}
+
+TEST_F(JsonRpcDispatcherTest, RunsNonToolMethodsInlineWhenThreadPoolEnabled) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 8);
+    const auto caller_thread_id = std::this_thread::get_id();
+    const std::vector<std::string> inline_methods = {
+            "initialize",
+            "tools/list",
+            "resources/list",
+            "prompts/list"
+    };
+
+    for (const auto& method : inline_methods) {
+        std::thread::id handler_thread_id;
+        dispatcher.RegisterHandler(method, [&handler_thread_id](const json&) {
+            handler_thread_id = std::this_thread::get_id();
+            return json{{"ok", true}};
+        });
+
+        EXPECT_EQ(dispatcher.Call(method, json::object()).at("ok"), true);
+        EXPECT_EQ(handler_thread_id, caller_thread_id) << method;
+    }
 }
 
 TEST_F(JsonRpcServerTest, RunsRequestAndWritesFramedResultResponse) {

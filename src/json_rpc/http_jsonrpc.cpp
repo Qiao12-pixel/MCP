@@ -7,10 +7,13 @@
 
 
 #include "http_jsonrpc.h"
+#include <future>
 #include <httplib.h>
+#include <vector>
 
 #include "config/config.h"
 #include "logger/logger.h"
+#include "utils/thread_pool.h"
 
 namespace mcp {
     namespace jsonrpc {
@@ -47,8 +50,29 @@ namespace mcp {
 
                 //检查是否为批量请求
                 if (request_json.is_array()) {
-                    json batch_json = json::array();
+                    struct PendingBatchResponse {
+                        JsonRpcResponse response;
+                        std::future<json> future;
+                        bool has_future = false;
+                    };
 
+                    auto serialize_response = [](const JsonRpcResponse& res) {
+                        json res_json = {{"jsonrpc", res.jsonrpc}, {"id", res.id}};
+                        if (res.result.has_value()) {
+                            res_json["result"] = res.result.value();
+                        } else if (res.error.has_value()) {
+                            res_json["error"] = {
+                                {"code", res.error->code},
+                                {"message", res.error->message},
+                            };
+                            if (res.error->data.has_value()) {
+                                res_json["error"]["data"] = res.error->data.value();
+                            }
+                        }
+                        return res_json;
+                    };
+
+                    std::vector<PendingBatchResponse> pending_responses;
                     for (const auto& single_req_json : request_json) {
                         try {
                             //从Json解析请求==>构建JsonRpcRequest
@@ -65,7 +89,7 @@ namespace mcp {
                             if (!req.id.has_value()) {
                                 //通知请求
                                 if (m_dispatcher_.HasHandler(req.method)) {
-                                    m_dispatcher_.Call(req.method, req.params.value_or(json::object()));
+                                    m_dispatcher_.CallAsync(req.method, req.params.value_or(json::object()));
                                 }
                                 continue;
                             }
@@ -82,8 +106,19 @@ namespace mcp {
                                         .data = std::nullopt,
                                     };
                                 } else {
-                                    res.result = m_dispatcher_.Call(req.method, req.params.value_or(json::object()));
+                                    pending_responses.emplace_back(PendingBatchResponse{
+                                            .response = std::move(res),
+                                            .future = m_dispatcher_.CallAsync(req.method, req.params.value_or(json::object())),
+                                            .has_future = true,
+                                    });
+                                    continue;
                                 }
+                            } catch (const ThreadPoolQueueFull &e) {
+                                res.error = JsonRpcError{
+                                .code = jsonrpc_error_code::ServerBusy,
+                                .message = e.what(),
+                                .data = std::nullopt,
+                                };
                             } catch (const std::exception &e) {
                                 res.error = JsonRpcError{
                                 .code = jsonrpc_error_code::InternalError,
@@ -91,32 +126,45 @@ namespace mcp {
                                 .data = std::nullopt,
                                 };
                             }
-                            //序列化响应
-                            json res_json = {{"jsonrpc", res.jsonrpc}, {"id", res.id}};
-                            if (res.result.has_value()) {
-                                res_json["result"] = res.result.value();
-                            } else if(res.error.has_value()) {
-                                res_json["error"] = {
-                                    {"code", res.error->code},
-                                    {"message", res.error->message},
-                                };
-                                if (res.error->data.has_value()) {
-                                    res_json["error"]["data"] = res.error->data.value();
-                                }
-                            }
-                            batch_json.emplace_back(res_json);
+                            pending_responses.emplace_back(PendingBatchResponse{
+                                    .response = std::move(res),
+                            });
                         } catch (const std::exception &e) {
                             MCP_LOG_ERROR("Error in batch request: {}", e.what());
-                            json error_res = {
-                                {"jsonrpc", "2.0"},
-                                {"error", {
-                                    {"code", jsonrpc_error_code::InternalError},
-                                    {"message", e.what()},
-                                }},
-                                {"id", nullptr}
+                            JsonRpcResponse error_res;
+                            error_res.jsonrpc = "2.0";
+                            error_res.id = nullptr;
+                            error_res.error = JsonRpcError{
+                                    .code = jsonrpc_error_code::InternalError,
+                                    .message = e.what(),
+                                    .data = std::nullopt,
                             };
-                            batch_json.emplace_back(error_res);
+                            pending_responses.emplace_back(PendingBatchResponse{
+                                    .response = std::move(error_res),
+                            });
                         }
+                    }
+
+                    json batch_json = json::array();
+                    for (auto& pending : pending_responses) {
+                        if (pending.has_future) {
+                            try {
+                                pending.response.result = pending.future.get();
+                            } catch (const ThreadPoolQueueFull &e) {
+                                pending.response.error = JsonRpcError{
+                                .code = jsonrpc_error_code::ServerBusy,
+                                .message = e.what(),
+                                .data = std::nullopt,
+                                };
+                            } catch (const std::exception &e) {
+                                pending.response.error = JsonRpcError{
+                                .code = jsonrpc_error_code::InternalError,
+                                .message = e.what(),
+                                .data = std::nullopt,
+                                };
+                            }
+                        }
+                        batch_json.emplace_back(serialize_response(pending.response));
                     }
                     std::string response = batch_json.dump();
                     MCP_LOG_DEBUG("Batch Response: {}", response);
@@ -155,6 +203,12 @@ namespace mcp {
                     } else {
                         response.result = m_dispatcher_.Call(request.method, request.params.value_or(json::object()));
                     }
+                } catch (const ThreadPoolQueueFull &e) {
+                    response.error = JsonRpcError{
+                    .code = jsonrpc_error_code::ServerBusy,
+                    .message = e.what(),
+                    .data = std::nullopt,
+                    };
                 } catch (const std::exception &e) {
                     response.error = JsonRpcError{
                     .code = jsonrpc_error_code::InternalError,

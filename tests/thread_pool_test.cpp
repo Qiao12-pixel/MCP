@@ -44,7 +44,7 @@ TEST(ThreadPoolTest, RejectsTasksWhenQueueIsFull) {
 
     auto second = pool.Submit([] {});
 
-    EXPECT_THROW(pool.Submit([] {}), std::runtime_error);
+    EXPECT_THROW(pool.Submit([] {}), mcp::ThreadPoolQueueFull);
 
     allow_first_task.set_value();
     first.get();
@@ -62,4 +62,27 @@ TEST(ThreadPoolTest, RejectsSubmitAfterShutdown) {
 TEST(ThreadPoolTest, RejectsInvalidConfiguration) {
     EXPECT_THROW(ThreadPool(0, 4), std::invalid_argument);
     EXPECT_THROW(ThreadPool(1, 0), std::invalid_argument);
+}
+
+TEST(ThreadPoolTest, ReportsWorkerAndQueueMetrics) {
+    ThreadPool pool(1, 2);
+    std::promise<void> first_task_started;
+    auto first_task_has_started = first_task_started.get_future();
+    std::promise<void> allow_first_task;
+    auto first_task_allowed = allow_first_task.get_future().share();
+
+    auto first = pool.Submit([&first_task_started, first_task_allowed] {
+        first_task_started.set_value();
+        first_task_allowed.wait();
+    });
+    first_task_has_started.wait();
+    auto second = pool.Submit([] {});
+
+    EXPECT_EQ(pool.WorkerCount(), 1);
+    EXPECT_EQ(pool.MaxQueueSize(), 2);
+    EXPECT_EQ(pool.PendingTasks(), 1);
+
+    allow_first_task.set_value();
+    first.get();
+    second.get();
 }

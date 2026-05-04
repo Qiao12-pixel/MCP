@@ -9,6 +9,7 @@
 #include "config.h"
 #include <iostream>
 #include <fstream>
+#include <unordered_set>
 
 namespace mcp {
     namespace config {
@@ -86,6 +87,13 @@ namespace mcp {
             if (!thread_pool.contains("max_queue_size")) {
                 thread_pool["max_queue_size"] = 128;
             }
+            if (!thread_pool.contains("pooled_methods")) {
+                thread_pool["pooled_methods"] = json::array({
+                    "tools/call",
+                    "resources/read",
+                    "prompts/get"
+                });
+            }
         }
         bool Config::ValidateConfig() const {
             //Check server require
@@ -132,6 +140,28 @@ namespace mcp {
                 if (max_queue_size == 0) {
                     std::cerr << "thread_pool.max_queue_size must be greater than 0" << std::endl;
                     return false;
+                }
+                if (!m_config_data_["thread_pool"].contains("pooled_methods") ||
+                    !m_config_data_["thread_pool"]["pooled_methods"].is_array()) {
+                    std::cerr << "thread_pool.pooled_methods must be an array" << std::endl;
+                    return false;
+                }
+
+                std::unordered_set<std::string> seen_methods;
+                for (const auto& method : m_config_data_["thread_pool"]["pooled_methods"]) {
+                    if (!method.is_string()) {
+                        std::cerr << "thread_pool.pooled_methods must contain strings only" << std::endl;
+                        return false;
+                    }
+                    const auto method_name = method.get<std::string>();
+                    if (method_name.empty()) {
+                        std::cerr << "thread_pool.pooled_methods cannot contain empty method names" << std::endl;
+                        return false;
+                    }
+                    if (!seen_methods.insert(method_name).second) {
+                        std::cerr << "thread_pool.pooled_methods contains duplicate method: " << method_name << std::endl;
+                        return false;
+                    }
                 }
             }
             // ===================================================================
@@ -180,6 +210,14 @@ namespace mcp {
 
         size_t Config::GetThreadPoolMaxQueueSize() const {
             return m_config_data_["thread_pool"].value("max_queue_size", 128);
+        }
+
+        std::vector<std::string> Config::GetThreadPoolPooledMethods() const {
+            return m_config_data_["thread_pool"].value("pooled_methods", std::vector<std::string>{
+                "tools/call",
+                "resources/read",
+                "prompts/get"
+            });
         }
 
         // ===================================================================

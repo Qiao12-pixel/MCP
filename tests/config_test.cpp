@@ -41,7 +41,8 @@ TEST(ConfigTest, LoadsCompleteConfigAndReturnsConfiguredValues) {
         },
         "thread_pool": {
             "size": 3,
-            "max_queue_size": 9
+            "max_queue_size": 9,
+            "pooled_methods": ["custom/run", "tools/call"]
         }
     })");
 
@@ -57,6 +58,7 @@ TEST(ConfigTest, LoadsCompleteConfigAndReturnsConfiguredValues) {
     EXPECT_FALSE(config.GetLogConsoleOutput());
     EXPECT_EQ(config.GetThreadPoolSize(), 3);
     EXPECT_EQ(config.GetThreadPoolMaxQueueSize(), 9);
+    EXPECT_EQ(config.GetThreadPoolPooledMethods(), std::vector<std::string>({"custom/run", "tools/call"}));
 }
 
 TEST(ConfigTest, LoadsServerJsonFromProjectConfigDirectory) {
@@ -72,8 +74,13 @@ TEST(ConfigTest, LoadsServerJsonFromProjectConfigDirectory) {
     EXPECT_EQ(config.GetLogFileSize(), 52428800);
     EXPECT_EQ(config.GetLogFileCount(), 5);
     EXPECT_TRUE(config.GetLogConsoleOutput());
-    EXPECT_EQ(config.GetThreadPoolSize(), 4);
+    EXPECT_EQ(config.GetThreadPoolSize(), 16);
     EXPECT_EQ(config.GetThreadPoolMaxQueueSize(), 128);
+    EXPECT_EQ(config.GetThreadPoolPooledMethods(), std::vector<std::string>({
+        "tools/call",
+        "resources/read",
+        "prompts/get"
+    }));
 }
 
 TEST(ConfigTest, UsesDefaultsWhenSectionsOrFieldsAreMissing) {
@@ -90,6 +97,11 @@ TEST(ConfigTest, UsesDefaultsWhenSectionsOrFieldsAreMissing) {
     EXPECT_TRUE(config.GetLogConsoleOutput());
     EXPECT_EQ(config.GetThreadPoolSize(), 4);
     EXPECT_EQ(config.GetThreadPoolMaxQueueSize(), 128);
+    EXPECT_EQ(config.GetThreadPoolPooledMethods(), std::vector<std::string>({
+        "tools/call",
+        "resources/read",
+        "prompts/get"
+    }));
 }
 
 TEST(ConfigTest, ReturnsFalseForMissingFile) {
@@ -178,6 +190,36 @@ TEST(ConfigTest, RejectsZeroThreadPoolMaxQueueSize) {
     const auto path = WriteTempConfig(R"({
         "thread_pool": {
             "max_queue_size": 0
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsNonArrayThreadPoolPooledMethods) {
+    const auto path = WriteTempConfig(R"({
+        "thread_pool": {
+            "pooled_methods": "tools/call"
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsNonStringThreadPoolPooledMethods) {
+    const auto path = WriteTempConfig(R"({
+        "thread_pool": {
+            "pooled_methods": ["tools/call", 42]
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsDuplicateThreadPoolPooledMethods) {
+    const auto path = WriteTempConfig(R"({
+        "thread_pool": {
+            "pooled_methods": ["tools/call", "tools/call"]
         }
     })");
 

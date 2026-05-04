@@ -2,12 +2,17 @@
 #include <json_rpc/jsonrpc_serialization.h>
 #include <json_rpc/stdio_jsonrpc_server.h>
 #include <logger/logger.h>
+#include <utils/thread_pool.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <future>
 #include <sstream>
 #include <thread>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -209,6 +214,101 @@ TEST_F(JsonRpcDispatcherTest, RunsNonToolMethodsInlineWhenThreadPoolEnabled) {
         EXPECT_EQ(dispatcher.Call(method, json::object()).at("ok"), true);
         EXPECT_EQ(handler_thread_id, caller_thread_id) << method;
     }
+}
+
+TEST_F(JsonRpcDispatcherTest, ReportsThreadPoolMetricsWhenEnabled) {
+    JsonRpcDispatcher dispatcher;
+
+    EXPECT_EQ(dispatcher.ThreadPoolWorkerCount(), 0);
+    EXPECT_EQ(dispatcher.ThreadPoolPendingTasks(), 0);
+    EXPECT_EQ(dispatcher.ThreadPoolMaxQueueSize(), 0);
+
+    dispatcher.EnableThreadPool(2, 5);
+
+    EXPECT_EQ(dispatcher.ThreadPoolWorkerCount(), 2);
+    EXPECT_EQ(dispatcher.ThreadPoolPendingTasks(), 0);
+    EXPECT_EQ(dispatcher.ThreadPoolMaxQueueSize(), 5);
+}
+
+TEST_F(JsonRpcDispatcherTest, CallAsyncReturnsBeforePooledHandlerCompletes) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 4);
+    std::promise<void> handler_started;
+    auto handler_has_started = handler_started.get_future();
+    std::promise<void> allow_handler;
+    auto handler_allowed = allow_handler.get_future().share();
+
+    dispatcher.RegisterHandler("tools/call", [&handler_started, handler_allowed](const json&) {
+        handler_started.set_value();
+        handler_allowed.wait();
+        return json{{"ok", true}};
+    });
+
+    auto future = dispatcher.CallAsync("tools/call", json::object());
+    handler_has_started.wait();
+
+    EXPECT_EQ(future.wait_for(std::chrono::milliseconds(1)), std::future_status::timeout);
+
+    allow_handler.set_value();
+    EXPECT_EQ(future.get().at("ok"), true);
+}
+
+TEST_F(JsonRpcDispatcherTest, UsesConfiguredPooledMethods) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 4, {"custom/run"});
+    const auto caller_thread_id = std::this_thread::get_id();
+    std::thread::id custom_thread_id;
+    std::thread::id tools_thread_id;
+
+    dispatcher.RegisterHandler("custom/run", [&custom_thread_id](const json&) {
+        custom_thread_id = std::this_thread::get_id();
+        return json{{"ok", true}};
+    });
+    dispatcher.RegisterHandler("tools/call", [&tools_thread_id](const json&) {
+        tools_thread_id = std::this_thread::get_id();
+        return json{{"ok", true}};
+    });
+
+    EXPECT_EQ(dispatcher.Call("custom/run", json::object()).at("ok"), true);
+    EXPECT_EQ(dispatcher.Call("tools/call", json::object()).at("ok"), true);
+    EXPECT_NE(custom_thread_id, caller_thread_id);
+    EXPECT_EQ(tools_thread_id, caller_thread_id);
+}
+
+TEST_F(JsonRpcDispatcherTest, ThrowsServerBusyWhenThreadPoolQueueIsFull) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 1);
+    std::atomic_bool first_start_seen{false};
+    std::promise<void> first_task_started;
+    auto first_task_has_started = first_task_started.get_future();
+    std::promise<void> allow_first_task;
+    auto first_task_allowed = allow_first_task.get_future().share();
+
+    dispatcher.RegisterHandler("tools/call", [&first_start_seen, &first_task_started, first_task_allowed](const json&) {
+        if (!first_start_seen.exchange(true)) {
+            first_task_started.set_value();
+        }
+        first_task_allowed.wait();
+        return json{{"ok", true}};
+    });
+
+    auto first = std::async(std::launch::async, [&dispatcher] {
+        return dispatcher.Call("tools/call", json::object());
+    });
+    first_task_has_started.wait();
+    auto second = std::async(std::launch::async, [&dispatcher] {
+        return dispatcher.Call("tools/call", json::object());
+    });
+    for (int attempt = 0; attempt < 100 && dispatcher.ThreadPoolPendingTasks() == 0; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(dispatcher.ThreadPoolPendingTasks(), 1);
+
+    EXPECT_THROW(dispatcher.Call("tools/call", json::object()), mcp::ThreadPoolQueueFull);
+
+    allow_first_task.set_value();
+    EXPECT_EQ(first.get().at("ok"), true);
+    EXPECT_EQ(second.get().at("ok"), true);
 }
 
 TEST_F(JsonRpcServerTest, RunsRequestAndWritesFramedResultResponse) {

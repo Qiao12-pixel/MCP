@@ -10,7 +10,12 @@
     "log_console_output": true
   },
   "thread_pool": {
-    "size": 4,
-    "max_queue_size": 128
+    "size": 16,
+    "max_queue_size": 128,
+    "pooled_methods": [
+      "tools/call",
+      "resources/read",
+      "prompts/get"
+    ]
   }
 }

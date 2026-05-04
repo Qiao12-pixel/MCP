@@ -11,6 +11,7 @@
 #include <string>
 #include <nlohmann/json.hpp>
 #include <memory>
+#include <vector>
 
 namespace mcp {
     namespace config {
@@ -32,6 +33,7 @@ namespace mcp {
             bool GetLogConsoleOutput() const;
             size_t GetThreadPoolSize() const;
             size_t GetThreadPoolMaxQueueSize() const;
+            std::vector<std::string> GetThreadPoolPooledMethods() const;
             /**
              * 可扩展获取其他字段方法，具体字段查看config/server.json
              */

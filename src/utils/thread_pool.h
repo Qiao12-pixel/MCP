@@ -23,6 +23,11 @@
 
 
 namespace mcp {
+    class ThreadPoolQueueFull : public std::runtime_error {
+    public:
+        ThreadPoolQueueFull() : std::runtime_error("ThreadPool queue is full") {}
+    };
+
     class ThreadPool {
     public:
         explicit ThreadPool(size_t num_threads, size_t max_queue_size);
@@ -32,6 +37,9 @@ namespace mcp {
         ThreadPool& operator=(const ThreadPool&) = delete;
 
         void Shutdown();
+        size_t WorkerCount() const;
+        size_t PendingTasks() const;
+        size_t MaxQueueSize() const;
 
         template <typename F, typename... Args>
         auto Submit(F&& f, Args&&... args)->std::future<std::invoke_result_t<F, Args...>> {
@@ -46,7 +54,7 @@ namespace mcp {
                     throw std::runtime_error("ThreadPool stopped");
                 }
                 if (m_tasks_.size() >= m_max_queue_size_) {
-                    throw std::runtime_error("ThreadPool queue is full");
+                    throw ThreadPoolQueueFull();
                 }
                 m_tasks_.emplace([task] {
                     (*task)();
@@ -60,7 +68,7 @@ namespace mcp {
         std::vector<std::thread> m_workers_;
         std::queue<std::function<void()>> m_tasks_;
         std::condition_variable m_cv_;
-        std::mutex m_mutex_;
+        mutable std::mutex m_mutex_;
         std::atomic_bool m_stop_{false};
         size_t m_max_queue_size_;
     };

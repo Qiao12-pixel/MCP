@@ -3,6 +3,11 @@
 #include <logger/logger.h>
 #include <json_rpc/http_jsonrpc.h>
 
+#include <atomic>
+#include <chrono>
+#include <future>
+#include <thread>
+
 using namespace mcp::jsonrpc;
 
 class HttpJsonRpcServerTest : public ::testing::Test {
@@ -34,7 +39,7 @@ TEST_F(HttpJsonRpcServerTest, HandlesSingleRequest) {
     dispatcher.RegisterHandler("add", [](const nlohmann::json& params) {
         return params.at("a").get<int>() + params.at("b").get<int>();
     });
-    auto server = MakeServer(std::move(dispatcher));
+    auto server = MakeServer(dispatcher);
 
     nlohmann::json request = {
         {"jsonrpc", "2.0"},
@@ -57,7 +62,7 @@ TEST_F(HttpJsonRpcServerTest, HandlesNotificationWithoutResponseBody) {
         called = params.at("ok").get<bool>();
         return nlohmann::json{{"ignored", true}};
     });
-    auto server = MakeServer(std::move(dispatcher));
+    auto server = MakeServer(dispatcher);
 
     nlohmann::json notification = {
         {"jsonrpc", "2.0"},
@@ -92,6 +97,103 @@ TEST_F(HttpJsonRpcServerTest, ReturnsParseErrorForInvalidJson) {
     EXPECT_EQ(response.at("jsonrpc"), "2.0");
     EXPECT_TRUE(response.at("id").is_null());
     EXPECT_EQ(response.at("error").at("code"), jsonrpc_error_code::ParseError);
+}
+
+TEST_F(HttpJsonRpcServerTest, ReturnsServerBusyWhenThreadPoolQueueIsFull) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 1);
+    std::atomic_bool first_start_seen{false};
+    std::promise<void> first_task_started;
+    auto first_task_has_started = first_task_started.get_future();
+    std::promise<void> allow_tasks;
+    auto tasks_allowed = allow_tasks.get_future().share();
+
+    dispatcher.RegisterHandler("tools/call", [&first_start_seen, &first_task_started, tasks_allowed](const nlohmann::json&) {
+        if (!first_start_seen.exchange(true)) {
+            first_task_started.set_value();
+        }
+        tasks_allowed.wait();
+        return nlohmann::json{{"ok", true}};
+    });
+    auto server = MakeServer(dispatcher);
+
+    const auto make_request = [](int id) {
+        return nlohmann::json{
+            {"jsonrpc", "2.0"},
+            {"id", id},
+            {"method", "tools/call"},
+            {"params", nlohmann::json::object()}
+        }.dump();
+    };
+
+    auto first = std::async(std::launch::async, [&server, &make_request] {
+        return server.HandleRequest(make_request(1));
+    });
+    first_task_has_started.wait();
+    auto second = std::async(std::launch::async, [&server, &make_request] {
+        return server.HandleRequest(make_request(2));
+    });
+    for (int attempt = 0; attempt < 100 && dispatcher.ThreadPoolPendingTasks() == 0; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(dispatcher.ThreadPoolPendingTasks(), 1);
+
+    auto response = nlohmann::json::parse(server.HandleRequest(make_request(3)));
+
+    EXPECT_EQ(response.at("id"), 3);
+    EXPECT_EQ(response.at("error").at("code"), jsonrpc_error_code::ServerBusy);
+
+    allow_tasks.set_value();
+    EXPECT_EQ(nlohmann::json::parse(first.get()).at("result").at("ok"), true);
+    EXPECT_EQ(nlohmann::json::parse(second.get()).at("result").at("ok"), true);
+}
+
+TEST_F(HttpJsonRpcServerTest, RunsBatchPooledRequestsConcurrently) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(2, 4);
+    std::atomic_int started_count{0};
+    std::promise<void> both_handlers_started;
+    auto both_handlers_have_started = both_handlers_started.get_future();
+    std::promise<void> allow_handlers;
+    auto handlers_allowed = allow_handlers.get_future().share();
+
+    dispatcher.RegisterHandler("tools/call", [&started_count, &both_handlers_started, handlers_allowed](const nlohmann::json&) {
+        if (started_count.fetch_add(1) == 1) {
+            both_handlers_started.set_value();
+        }
+        handlers_allowed.wait();
+        return nlohmann::json{{"ok", true}};
+    });
+    auto server = MakeServer(std::move(dispatcher));
+
+    nlohmann::json batch = nlohmann::json::array({
+        {
+            {"jsonrpc", "2.0"},
+            {"id", 1},
+            {"method", "tools/call"},
+            {"params", nlohmann::json::object()}
+        },
+        {
+            {"jsonrpc", "2.0"},
+            {"id", 2},
+            {"method", "tools/call"},
+            {"params", nlohmann::json::object()}
+        }
+    });
+
+    auto response_future = std::async(std::launch::async, [&server, batch] {
+        return server.HandleRequest(batch.dump());
+    });
+
+    ASSERT_EQ(both_handlers_have_started.wait_for(std::chrono::milliseconds(100)),
+              std::future_status::ready);
+    allow_handlers.set_value();
+
+    auto response = nlohmann::json::parse(response_future.get());
+    ASSERT_TRUE(response.is_array());
+    ASSERT_EQ(response.size(), 2);
+    EXPECT_EQ(response.at(0).at("result").at("ok"), true);
+    EXPECT_EQ(response.at(1).at("result").at("ok"), true);
 }
 
 TEST_F(HttpJsonRpcServerTest, HandlesBatchAndSkipsNotifications) {

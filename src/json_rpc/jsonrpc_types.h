@@ -48,6 +48,7 @@ namespace mcp {
             constexpr int InvalidParams = -32602;
             constexpr int InternalError = -32603;
             // 应用自定义错误建议使用 -32000 ~ -32099
+            constexpr int ServerBusy = -32000;
         }
 
     }

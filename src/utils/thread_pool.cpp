@@ -61,4 +61,17 @@ namespace mcp {
         }
     }
 
+    size_t ThreadPool::WorkerCount() const {
+        return m_workers_.size();
+    }
+
+    size_t ThreadPool::PendingTasks() const {
+        std::unique_lock<std::mutex> lock(m_mutex_);
+        return m_tasks_.size();
+    }
+
+    size_t ThreadPool::MaxQueueSize() const {
+        return m_max_queue_size_;
+    }
+
 }

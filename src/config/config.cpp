@@ -94,6 +94,49 @@ namespace mcp {
                     "prompts/get"
                 });
             }
+
+            //set image generation default
+            if (!m_config_data_.contains("image_generation")) {
+                m_config_data_["image_generation"] = json::object();
+            }
+            auto& image_generation = m_config_data_["image_generation"];
+            if (!image_generation.is_object()) {
+                return;
+            }
+            if (!image_generation.contains("default_provider")) {
+                image_generation["default_provider"] = "doubao";
+            }
+
+            if (!image_generation.contains("doubao")) {
+                image_generation["doubao"] = json::object();
+            }
+            auto& doubao = image_generation["doubao"];
+            if (!doubao.is_object()) {
+                return;
+            }
+            if (!doubao.contains("api_key")) {
+                doubao["api_key"] = "";
+            }
+            if (!doubao.contains("model")) {
+                doubao["model"] = "doubao-seedream-4-5-251128";
+            }
+            if (!doubao.contains("api_url")) {
+                doubao["api_url"] = "https://ark.cn-beijing.volces.com/api/v3/images/generations";
+            }
+
+            if (!image_generation.contains("gemini")) {
+                image_generation["gemini"] = json::object();
+            }
+            auto& gemini = image_generation["gemini"];
+            if (!gemini.is_object()) {
+                return;
+            }
+            if (!gemini.contains("api_key")) {
+                gemini["api_key"] = "";
+            }
+            if (!gemini.contains("model")) {
+                gemini["model"] = "gemini-3.1-flash-image-preview";
+            }
         }
         bool Config::ValidateConfig() const {
             //Check server require
@@ -164,6 +207,56 @@ namespace mcp {
                     }
                 }
             }
+
+            if (m_config_data_.contains("image_generation")) {
+                const auto& image_generation = m_config_data_["image_generation"];
+                if (!image_generation.is_object()) {
+                    std::cerr << "image_generation must be an object" << std::endl;
+                    return false;
+                }
+
+                if (!image_generation["default_provider"].is_string()) {
+                    std::cerr << "image_generation.default_provider must be a string" << std::endl;
+                    return false;
+                }
+                const std::string default_provider = image_generation["default_provider"].get<std::string>();
+                if (default_provider != "doubao" && default_provider != "gemini") {
+                    std::cerr << "image_generation.default_provider must be doubao or gemini" << std::endl;
+                    return false;
+                }
+
+                if (!image_generation.contains("doubao") || !image_generation["doubao"].is_object()) {
+                    std::cerr << "image_generation.doubao must be an object" << std::endl;
+                    return false;
+                }
+                const auto& doubao = image_generation["doubao"];
+                if (!doubao["api_key"].is_string()) {
+                    std::cerr << "image_generation.doubao.api_key must be a string" << std::endl;
+                    return false;
+                }
+                if (!doubao["model"].is_string() || doubao["model"].get<std::string>().empty()) {
+                    std::cerr << "image_generation.doubao.model cannot be empty" << std::endl;
+                    return false;
+                }
+                if (!doubao["api_url"].is_string() || doubao["api_url"].get<std::string>().empty()) {
+                    std::cerr << "image_generation.doubao.api_url cannot be empty" << std::endl;
+                    return false;
+                }
+
+                if (!image_generation.contains("gemini") || !image_generation["gemini"].is_object()) {
+                    std::cerr << "image_generation.gemini must be an object" << std::endl;
+                    return false;
+                }
+                const auto& gemini = image_generation["gemini"];
+                if (!gemini["api_key"].is_string()) {
+                    std::cerr << "image_generation.gemini.api_key must be a string" << std::endl;
+                    return false;
+                }
+                if (!gemini["model"].is_string() || gemini["model"].get<std::string>().empty()) {
+                    std::cerr << "image_generation.gemini.model cannot be empty" << std::endl;
+                    return false;
+                }
+            }
             // ===================================================================
             // 🔧 Extension point: Add validation logic for new fields here
             // ===================================================================
@@ -218,6 +311,39 @@ namespace mcp {
                 "resources/read",
                 "prompts/get"
             });
+        }
+
+        std::string Config::GetImageGenerationDefaultProvider() const {
+            return m_config_data_["image_generation"].value("default_provider", std::string("doubao"));
+        }
+
+        std::string Config::GetDoubaoImageApiKey() const {
+            return m_config_data_["image_generation"]["doubao"].value("api_key", std::string());
+        }
+
+        std::string Config::GetDoubaoImageModel() const {
+            return m_config_data_["image_generation"]["doubao"].value(
+                "model",
+                std::string("doubao-seedream-4-5-251128")
+            );
+        }
+
+        std::string Config::GetDoubaoImageApiUrl() const {
+            return m_config_data_["image_generation"]["doubao"].value(
+                "api_url",
+                std::string("https://ark.cn-beijing.volces.com/api/v3/images/generations")
+            );
+        }
+
+        std::string Config::GetGeminiImageApiKey() const {
+            return m_config_data_["image_generation"]["gemini"].value("api_key", std::string());
+        }
+
+        std::string Config::GetGeminiImageModel() const {
+            return m_config_data_["image_generation"]["gemini"].value(
+                "model",
+                std::string("gemini-3.1-flash-image-preview")
+            );
         }
 
         // ===================================================================

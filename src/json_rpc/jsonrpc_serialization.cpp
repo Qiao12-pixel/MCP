@@ -7,6 +7,9 @@
 
 
 #include "jsonrpc_serialization.h"
+
+#include <utility>
+
 namespace mcp {
     namespace jsonrpc {
 
@@ -85,6 +88,29 @@ namespace mcp {
             } else {
                 err.data.reset();
             }
+        }
+
+        JsonRpcResponse MakeErrorResponse(const json& id,
+                                          int code,
+                                          const std::string& message,
+                                          std::optional<json> data) {
+            JsonRpcResponse res;
+            res.jsonrpc = "2.0";
+            res.id = id;
+            res.error = JsonRpcError{
+                .code = code,
+                .message = message,
+                .data = std::move(data),
+            };
+            return res;
+        }
+
+        json SerializeResponse(const JsonRpcResponse& res) {
+            return json(res);
+        }
+
+        std::string DumpResponse(const JsonRpcResponse& res) {
+            return SerializeResponse(res).dump();
         }
     }
 

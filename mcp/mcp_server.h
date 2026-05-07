@@ -17,6 +17,10 @@
 // MCP 服务器核心类
 // 提供 Tools、Resources、Prompts 的管理功能
 namespace mcp {
+    namespace sql {
+        class ToolCallHistoryRepository;
+    }
+
     class McpServer {
     public:
         // ===== Tool 相关类型 =====
@@ -28,12 +32,14 @@ namespace mcp {
         //获取初始化结果
         InitializeResult GetInitializationResult() const;//握手响应。它包含了ServerInfo,ServerCapabilities，是连接建立成功的标志。
         //设置服务器能力
+        void SetCapabilities(const ServerCapabilities& cap);
         void SetCapbilities(const ServerCapabilities& cap);
         //Tools
         void RegisterTool(const Tool& tool, const ToolHandler handler);
         std::vector<Tool> ListTools() const;
         bool HasTool(const std::string& name) const;
         ToolResult GetTool(const std::string& name, const json& argument);
+        void SetToolCallHistoryRepository(std::shared_ptr<sql::ToolCallHistoryRepository> repository);
 
         //Resources
         void RegisterResource(const Resource& resource, ResourceProvider provider);
@@ -72,6 +78,11 @@ namespace mcp {
 
         SseEventCallback m_sse_callback_;
         mutable std::mutex m_sse__mutex_;
+
+        std::shared_ptr<sql::ToolCallHistoryRepository> m_tool_history_repository_;
+        mutable std::mutex m_tool_history_mutex_;
+
+        std::shared_ptr<sql::ToolCallHistoryRepository> GetToolCallHistoryRepository() const;
     };
 }
 

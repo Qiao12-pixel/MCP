@@ -43,6 +43,18 @@ TEST(ConfigTest, LoadsCompleteConfigAndReturnsConfiguredValues) {
             "size": 3,
             "max_queue_size": 9,
             "pooled_methods": ["custom/run", "tools/call"]
+        },
+        "image_generation": {
+            "default_provider": "doubao",
+            "doubao": {
+                "api_key": "test-doubao-key",
+                "model": "test-doubao-model",
+                "api_url": "https://example.com/images"
+            },
+            "gemini": {
+                "api_key": "test-gemini-key",
+                "model": "test-gemini-model"
+            }
         }
     })");
 
@@ -59,6 +71,12 @@ TEST(ConfigTest, LoadsCompleteConfigAndReturnsConfiguredValues) {
     EXPECT_EQ(config.GetThreadPoolSize(), 3);
     EXPECT_EQ(config.GetThreadPoolMaxQueueSize(), 9);
     EXPECT_EQ(config.GetThreadPoolPooledMethods(), std::vector<std::string>({"custom/run", "tools/call"}));
+    EXPECT_EQ(config.GetImageGenerationDefaultProvider(), "doubao");
+    EXPECT_EQ(config.GetDoubaoImageApiKey(), "test-doubao-key");
+    EXPECT_EQ(config.GetDoubaoImageModel(), "test-doubao-model");
+    EXPECT_EQ(config.GetDoubaoImageApiUrl(), "https://example.com/images");
+    EXPECT_EQ(config.GetGeminiImageApiKey(), "test-gemini-key");
+    EXPECT_EQ(config.GetGeminiImageModel(), "test-gemini-model");
 }
 
 TEST(ConfigTest, LoadsServerJsonFromProjectConfigDirectory) {
@@ -81,6 +99,12 @@ TEST(ConfigTest, LoadsServerJsonFromProjectConfigDirectory) {
         "resources/read",
         "prompts/get"
     }));
+    EXPECT_EQ(config.GetImageGenerationDefaultProvider(), "doubao");
+    EXPECT_EQ(config.GetDoubaoImageApiKey(), "");
+    EXPECT_EQ(config.GetDoubaoImageModel(), "doubao-seedream-4-5-251128");
+    EXPECT_EQ(config.GetDoubaoImageApiUrl(), "https://ark.cn-beijing.volces.com/api/v3/images/generations");
+    EXPECT_EQ(config.GetGeminiImageApiKey(), "");
+    EXPECT_EQ(config.GetGeminiImageModel(), "gemini-3.1-flash-image-preview");
 }
 
 TEST(ConfigTest, UsesDefaultsWhenSectionsOrFieldsAreMissing) {
@@ -102,6 +126,12 @@ TEST(ConfigTest, UsesDefaultsWhenSectionsOrFieldsAreMissing) {
         "resources/read",
         "prompts/get"
     }));
+    EXPECT_EQ(config.GetImageGenerationDefaultProvider(), "doubao");
+    EXPECT_EQ(config.GetDoubaoImageApiKey(), "");
+    EXPECT_EQ(config.GetDoubaoImageModel(), "doubao-seedream-4-5-251128");
+    EXPECT_EQ(config.GetDoubaoImageApiUrl(), "https://ark.cn-beijing.volces.com/api/v3/images/generations");
+    EXPECT_EQ(config.GetGeminiImageApiKey(), "");
+    EXPECT_EQ(config.GetGeminiImageModel(), "gemini-3.1-flash-image-preview");
 }
 
 TEST(ConfigTest, ReturnsFalseForMissingFile) {
@@ -220,6 +250,40 @@ TEST(ConfigTest, RejectsDuplicateThreadPoolPooledMethods) {
     const auto path = WriteTempConfig(R"({
         "thread_pool": {
             "pooled_methods": ["tools/call", "tools/call"]
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsInvalidImageGenerationDefaultProvider) {
+    const auto path = WriteTempConfig(R"({
+        "image_generation": {
+            "default_provider": "unknown"
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsEmptyDoubaoImageModel) {
+    const auto path = WriteTempConfig(R"({
+        "image_generation": {
+            "doubao": {
+                "model": ""
+            }
+        }
+    })");
+
+    EXPECT_FALSE(LoadConfigFromPath(path));
+}
+
+TEST(ConfigTest, RejectsEmptyDoubaoImageApiUrl) {
+    const auto path = WriteTempConfig(R"({
+        "image_generation": {
+            "doubao": {
+                "api_url": ""
+            }
         }
     })");
 

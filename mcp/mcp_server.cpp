@@ -7,8 +7,78 @@
 
 
 #include "mcp_server.h"
+
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
+#include <utility>
+
 #include "../src/logger/logger.h"
+#include "sql/tool_call_history_repository.h"
+
+namespace {
+    std::string FormatUtcTimestamp(const std::chrono::system_clock::time_point& time_point) {
+        const auto time = std::chrono::system_clock::to_time_t(time_point);
+        std::tm tm{};
+#if defined(_WIN32)
+        gmtime_s(&tm, &time);
+#else
+        gmtime_r(&time, &tm);
+#endif
+
+        std::ostringstream oss;
+        oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+        return oss.str();
+    }
+
+    int64_t DurationMillis(const std::chrono::system_clock::time_point& started,
+                           const std::chrono::system_clock::time_point& finished) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(finished - started).count();
+    }
+
+    std::string ExtractErrorMessage(const mcp::ToolResult& result) {
+        if (!result.is_error) {
+            return "";
+        }
+
+        for (const auto& item : result.content) {
+            if (item.text.has_value()) {
+                return item.text.value();
+            }
+        }
+        return "";
+    }
+
+    void RecordToolCallHistory(
+        const std::shared_ptr<mcp::sql::ToolCallHistoryRepository>& repository,
+        const std::string& name,
+        const mcp::json& arguments,
+        const mcp::ToolResult& result,
+        const std::chrono::system_clock::time_point& started,
+        const std::chrono::system_clock::time_point& finished,
+        const std::string& error_message = "") {
+        if (!repository) {
+            return;
+        }
+
+        try {
+            mcp::sql::ToolCallRecord record;
+            record.tool_name = name;
+            record.arguments_json = arguments.dump();
+            record.is_error = result.is_error;
+            record.result_json = result.to_json().dump();
+            record.error_message = error_message.empty() ? ExtractErrorMessage(result) : error_message;
+            record.started_at = FormatUtcTimestamp(started);
+            record.finished_at = FormatUtcTimestamp(finished);
+            record.duration_ms = DurationMillis(started, finished);
+            repository->Insert(record);
+        } catch (const std::exception& e) {
+            MCP_LOG_WARN("record tool call history failed: {}", e.what());
+        }
+    }
+}
 
 namespace mcp {
     McpServer::McpServer(const std::string &name, const std::string &version) {
@@ -28,8 +98,12 @@ namespace mcp {
         return result;
     }
 
-    void McpServer::SetCapbilities(const ServerCapabilities &cap) {
+    void McpServer::SetCapabilities(const ServerCapabilities &cap) {
         m_capabilities_ = cap;
+    }
+
+    void McpServer::SetCapbilities(const ServerCapabilities &cap) {
+        SetCapabilities(cap);
     }
 
     //Tools
@@ -54,6 +128,16 @@ namespace mcp {
         std::lock_guard<std::mutex> lock(m_tools_mutex_);
         return m_tools_.find(name) != m_tools_.end();
     }
+    void McpServer::SetToolCallHistoryRepository(std::shared_ptr<sql::ToolCallHistoryRepository> repository) {
+        std::lock_guard<std::mutex> lock(m_tool_history_mutex_);
+        m_tool_history_repository_ = std::move(repository);
+    }
+
+    std::shared_ptr<sql::ToolCallHistoryRepository> McpServer::GetToolCallHistoryRepository() const {
+        std::lock_guard<std::mutex> lock(m_tool_history_mutex_);
+        return m_tool_history_repository_;
+    }
+
     ToolResult McpServer::GetTool(const std::string &name, const json& argument) {
         ToolHandler handler;
         {
@@ -66,6 +150,8 @@ namespace mcp {
         }
 
         MCP_LOG_INFO("McpServer::GetTool: " + name);
+        const auto started = std::chrono::system_clock::now();
+
         // 推送工具调用开始事件
         {
             McpServer::SseEventCallback sse_callback;
@@ -84,6 +170,7 @@ namespace mcp {
         }
         try {
             auto result = handler(argument);
+            const auto finished = std::chrono::system_clock::now();
             // 推送工具调用完成事件
             {
                 McpServer::SseEventCallback sse_callback;
@@ -100,8 +187,10 @@ namespace mcp {
                     }));
                 }
             }
+            RecordToolCallHistory(GetToolCallHistoryRepository(), name, argument, result, started, finished);
             return result;
         } catch (const std::exception &e) {
+            const auto finished = std::chrono::system_clock::now();
             // 推送工具调用错误事件
             {
                 McpServer::SseEventCallback sse_callback;
@@ -124,6 +213,7 @@ namespace mcp {
             item.type = "text";
             item.text = std::string("error calling tool: ") + e.what();
             error_result.content.emplace_back(item);
+            RecordToolCallHistory(GetToolCallHistoryRepository(), name, argument, error_result, started, finished, e.what());
             return error_result;
         }
     }

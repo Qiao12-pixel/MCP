@@ -1,7 +1,11 @@
 #include <mcp/mcp_server.h>
 #include <logger/logger.h>
+#include <sql/tool_call_history_repository.h>
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -43,6 +47,12 @@ ContentItem TextItem(const std::string& text) {
     item.type = "text";
     item.text = text;
     return item;
+}
+
+std::filesystem::path UniqueHistoryDatabasePath(const std::string& name) {
+    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+    return std::filesystem::temp_directory_path() /
+           ("mcp_tool_history_" + name + "_" + std::to_string(suffix) + ".sqlite3");
 }
 
 }  // namespace
@@ -94,6 +104,61 @@ TEST_F(McpServerTest, ToolExceptionBecomesErrorToolResult) {
     ASSERT_EQ(result.content.size(), 1);
     ASSERT_TRUE(result.content.front().text.has_value());
     EXPECT_NE(result.content.front().text->find("boom"), std::string::npos);
+}
+
+TEST_F(McpServerTest, RecordsSuccessfulToolCallHistoryWhenRepositoryIsConfigured) {
+    const auto db_path = UniqueHistoryDatabasePath("success");
+    auto repository = std::make_shared<mcp::sql::ToolCallHistoryRepository>(db_path);
+    repository->Initialize();
+
+    McpServer server("unit-server", "1.0");
+    server.SetToolCallHistoryRepository(repository);
+    server.RegisterTool(MakeTool("echo"), [](const json& arguments) {
+        ToolResult result;
+        result.content.push_back(TextItem(arguments.at("message").get<std::string>()));
+        return result;
+    });
+
+    const auto result = server.GetTool("echo", json{{"message", "hello"}});
+    const auto records = repository->ListRecent(1);
+
+    EXPECT_FALSE(result.is_error);
+    ASSERT_EQ(records.size(), 1);
+    EXPECT_EQ(records.front().tool_name, "echo");
+    EXPECT_FALSE(records.front().is_error);
+    EXPECT_NE(records.front().arguments_json.find("\"message\":\"hello\""), std::string::npos);
+    EXPECT_NE(records.front().result_json.find("hello"), std::string::npos);
+    EXPECT_GE(records.front().duration_ms, 0);
+
+    server.SetToolCallHistoryRepository(nullptr);
+    repository.reset();
+    std::filesystem::remove(db_path);
+}
+
+TEST_F(McpServerTest, RecordsThrownToolCallHistoryWhenRepositoryIsConfigured) {
+    const auto db_path = UniqueHistoryDatabasePath("error");
+    auto repository = std::make_shared<mcp::sql::ToolCallHistoryRepository>(db_path);
+    repository->Initialize();
+
+    McpServer server("unit-server", "1.0");
+    server.SetToolCallHistoryRepository(repository);
+    server.RegisterTool(MakeTool("fail"), [](const json&) -> ToolResult {
+        throw std::runtime_error("boom");
+    });
+
+    const auto result = server.GetTool("fail", json::object());
+    const auto records = repository->ListRecent(1);
+
+    EXPECT_TRUE(result.is_error);
+    ASSERT_EQ(records.size(), 1);
+    EXPECT_EQ(records.front().tool_name, "fail");
+    EXPECT_TRUE(records.front().is_error);
+    EXPECT_EQ(records.front().error_message, "boom");
+    EXPECT_NE(records.front().result_json.find("boom"), std::string::npos);
+
+    server.SetToolCallHistoryRepository(nullptr);
+    repository.reset();
+    std::filesystem::remove(db_path);
 }
 
 TEST_F(McpServerTest, RejectsDuplicateToolRegistration) {
@@ -254,7 +319,7 @@ TEST_F(McpServerTest, SetCapabilitiesReplacesDefaultCapabilities) {
     McpServer server("unit-server", "1.0");
     mcp::ServerCapabilities capabilities;
     capabilities.tools = mcp::ServerCapabilities::ToolsCapability{true};
-    server.SetCapbilities(capabilities);
+    server.SetCapabilities(capabilities);
 
     const auto result = server.GetInitializationResult();
 

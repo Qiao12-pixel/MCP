@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "config/config.h"
+#include "jsonrpc_serialization.h"
 #include "logger/logger.h"
 #include "utils/thread_pool.h"
 
@@ -28,13 +29,11 @@ namespace mcp {
                 });
                 //设置错误处理
                 server.set_error_handler([](const httplib::Request& /*req*/, httplib::Response &res) {
-                    json error_response = {
-                        {"jsonrpc", "2.0"},
-                        {"error", {{"code", -32603}, {"message", "Internal server error"}
-                        }},
-                        {"id", nullptr}
-                    };
-                    res.set_content(error_response.dump(), "application/json");
+                    res.set_content(DumpResponse(MakeErrorResponse(
+                        nullptr,
+                        jsonrpc_error_code::InternalError,
+                        "Internal server error"
+                    )), "application/json");
                 });
             }
         };
@@ -56,25 +55,14 @@ namespace mcp {
                         bool has_future = false;
                     };
 
-                    auto serialize_response = [](const JsonRpcResponse& res) {
-                        json res_json = {{"jsonrpc", res.jsonrpc}, {"id", res.id}};
-                        if (res.result.has_value()) {
-                            res_json["result"] = res.result.value();
-                        } else if (res.error.has_value()) {
-                            res_json["error"] = {
-                                {"code", res.error->code},
-                                {"message", res.error->message},
-                            };
-                            if (res.error->data.has_value()) {
-                                res_json["error"]["data"] = res.error->data.value();
-                            }
-                        }
-                        return res_json;
-                    };
-
                     std::vector<PendingBatchResponse> pending_responses;
                     for (const auto& single_req_json : request_json) {
+                        bool is_notification = false;
+                        std::optional<json> request_id;
                         try {
+                            if (single_req_json.is_object() && single_req_json.contains("id")) {
+                                request_id = single_req_json.at("id");
+                            }
                             //从Json解析请求==>构建JsonRpcRequest
                             JsonRpcRequest req;
                             req.jsonrpc = single_req_json.value("jsonrpc", std::string("2.0"));
@@ -82,11 +70,12 @@ namespace mcp {
                             if (single_req_json.contains("params")) {
                                 req.params = single_req_json.at("params");
                             }
-                            if (single_req_json.contains("id")) {
-                                req.id = single_req_json.at("id");
+                            if (request_id.has_value()) {
+                                req.id = request_id.value();
                             }
                             //处理请求
                             if (!req.id.has_value()) {
+                                is_notification = true;
                                 //通知请求
                                 if (m_dispatcher_.HasHandler(req.method)) {
                                     m_dispatcher_.CallAsync(req.method, req.params.value_or(json::object()));
@@ -106,9 +95,10 @@ namespace mcp {
                                         .data = std::nullopt,
                                     };
                                 } else {
+                                    auto future = m_dispatcher_.CallAsync(req.method, req.params.value_or(json::object()));
                                     pending_responses.emplace_back(PendingBatchResponse{
                                             .response = std::move(res),
-                                            .future = m_dispatcher_.CallAsync(req.method, req.params.value_or(json::object())),
+                                            .future = std::move(future),
                                             .has_future = true,
                                     });
                                     continue;
@@ -130,10 +120,14 @@ namespace mcp {
                                     .response = std::move(res),
                             });
                         } catch (const std::exception &e) {
+                            if (is_notification) {
+                                MCP_LOG_ERROR("Error handling batch notification: {}", e.what());
+                                continue;
+                            }
                             MCP_LOG_ERROR("Error in batch request: {}", e.what());
                             JsonRpcResponse error_res;
                             error_res.jsonrpc = "2.0";
-                            error_res.id = nullptr;
+                            error_res.id = request_id.value_or(nullptr);
                             error_res.error = JsonRpcError{
                                     .code = jsonrpc_error_code::InternalError,
                                     .message = e.what(),
@@ -143,6 +137,10 @@ namespace mcp {
                                     .response = std::move(error_res),
                             });
                         }
+                    }
+
+                    if (pending_responses.empty()) {
+                        return "";
                     }
 
                     json batch_json = json::array();
@@ -164,7 +162,7 @@ namespace mcp {
                                 };
                             }
                         }
-                        batch_json.emplace_back(serialize_response(pending.response));
+                        batch_json.emplace_back(SerializeResponse(pending.response));
                     }
                     std::string response = batch_json.dump();
                     MCP_LOG_DEBUG("Batch Response: {}", response);
@@ -216,43 +214,21 @@ namespace mcp {
                     .data = std::nullopt,
                     };
                 }
-                //序列化响应
-                json response_json = {{"jsonrpc", response.jsonrpc}, {"id", response.id}};
-                if (response.result.has_value()) {
-                    response_json["result"] = response.result.value();
-                } else if (response.error.has_value()) {
-                    response_json["error"] = {
-                        {"code", response.error->code},
-                        {"message", response.error->message},
-                    };
-                    if (response.error->data.has_value()) {
-                        response_json["error"]["data"] = response.error->data.value();
-                    }
-                }
-                std::string response_str = response_json.dump();
-                return response_str;
+                return DumpResponse(response);
             } catch (const json::parse_error& e) {
                 MCP_LOG_ERROR("Parse error: {}", e.what());
-                json error_res = {
-                    {"jsonrpc", "2.0"},
-                    {"error", {
-                        {"code", jsonrpc_error_code::ParseError},
-                        {"message", std::string("Parse error: ") + e.what()},
-                    }},
-                    {"id", nullptr}
-                };
-                return error_res.dump();
+                return DumpResponse(MakeErrorResponse(
+                    nullptr,
+                    jsonrpc_error_code::ParseError,
+                    std::string("Parse error: ") + e.what()
+                ));
             } catch (const std::exception& e) {
                 MCP_LOG_ERROR("Error handling request: {}", e.what());
-                json error_res = {
-                    {"jsonrpc", "2.0"},
-                    {"error", {
-                      {"code", jsonrpc_error_code::InternalError},
-                        {"message", std::string("Internal error: ") + e.what()},
-                    }},
-                    {"id", nullptr}
-                };
-                return error_res.dump();
+                return DumpResponse(MakeErrorResponse(
+                    nullptr,
+                    jsonrpc_error_code::InternalError,
+                    std::string("Internal error: ") + e.what()
+                ));
             }
         }
         HttpJsonRpcServer::HttpJsonRpcServer(JsonRpcDispatcher dispatcher, const std::string &host, int port)
@@ -272,20 +248,16 @@ namespace mcp {
                 res.set_header("Access-Control-Allow-Headers", "Content-Type");
 
                 try {
-                    std::string respones = HandleRequest(req.body);
-                    res.set_content(respones, "application/json");
+                    std::string response = HandleRequest(req.body);
+                    res.set_content(response, "application/json");
                     res.status = 200;
                 } catch (const std::exception &e) {
                     MCP_LOG_ERROR("Error handling request: {}", e.what());
-                    json error_res = {
-                        {"jsonrpc", "2.0"},
-                        {"error", {
-                            {"code", jsonrpc_error_code::InternalError},
-                            {"message", e.what()},
-                        }},
-                        {"id", nullptr}
-                    };
-                    res.set_content(error_res.dump(), "application/json");
+                    res.set_content(DumpResponse(MakeErrorResponse(
+                        nullptr,
+                        jsonrpc_error_code::InternalError,
+                        e.what()
+                    )), "application/json");
                     res.status = 500;
                 }
             });

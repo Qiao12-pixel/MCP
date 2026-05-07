@@ -148,6 +148,103 @@ TEST_F(HttpJsonRpcServerTest, ReturnsServerBusyWhenThreadPoolQueueIsFull) {
     EXPECT_EQ(nlohmann::json::parse(second.get()).at("result").at("ok"), true);
 }
 
+TEST_F(HttpJsonRpcServerTest, PreservesBatchResponseIdWhenThreadPoolQueueIsFull) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 1);
+    std::atomic_bool first_start_seen{false};
+    std::promise<void> first_task_started;
+    auto first_task_has_started = first_task_started.get_future();
+    std::promise<void> allow_tasks;
+    auto tasks_allowed = allow_tasks.get_future().share();
+
+    dispatcher.RegisterHandler("tools/call", [&first_start_seen, &first_task_started, tasks_allowed](const nlohmann::json&) {
+        if (!first_start_seen.exchange(true)) {
+            first_task_started.set_value();
+        }
+        tasks_allowed.wait();
+        return nlohmann::json{{"ok", true}};
+    });
+    auto server = MakeServer(dispatcher);
+
+    nlohmann::json batch = nlohmann::json::array({
+        {
+            {"jsonrpc", "2.0"},
+            {"id", 1},
+            {"method", "tools/call"},
+            {"params", nlohmann::json::object()}
+        },
+        {
+            {"jsonrpc", "2.0"},
+            {"id", 2},
+            {"method", "tools/call"},
+            {"params", nlohmann::json::object()}
+        },
+        {
+            {"jsonrpc", "2.0"},
+            {"id", 3},
+            {"method", "tools/call"},
+            {"params", nlohmann::json::object()}
+        }
+    });
+
+    auto response_future = std::async(std::launch::async, [&server, batch] {
+        return server.HandleRequest(batch.dump());
+    });
+    first_task_has_started.wait();
+    for (int attempt = 0; attempt < 100 && dispatcher.ThreadPoolPendingTasks() == 0; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(dispatcher.ThreadPoolPendingTasks(), 1);
+
+    allow_tasks.set_value();
+
+    auto response = nlohmann::json::parse(response_future.get());
+    ASSERT_TRUE(response.is_array());
+    ASSERT_EQ(response.size(), 3);
+    EXPECT_EQ(response.at(0).at("id"), 1);
+    EXPECT_EQ(response.at(1).at("id"), 2);
+    EXPECT_EQ(response.at(2).at("id"), 3);
+    EXPECT_EQ(response.at(2).at("error").at("code"), jsonrpc_error_code::ServerBusy);
+}
+
+TEST_F(HttpJsonRpcServerTest, SkipsBatchNotificationErrorsWhenThreadPoolQueueIsFull) {
+    JsonRpcDispatcher dispatcher;
+    dispatcher.EnableThreadPool(1, 1);
+    std::atomic_bool first_start_seen{false};
+    std::promise<void> first_task_started;
+    auto first_task_has_started = first_task_started.get_future();
+    std::promise<void> allow_tasks;
+    auto tasks_allowed = allow_tasks.get_future().share();
+
+    dispatcher.RegisterHandler("tools/call", [&first_start_seen, &first_task_started, tasks_allowed](const nlohmann::json&) {
+        if (!first_start_seen.exchange(true)) {
+            first_task_started.set_value();
+        }
+        tasks_allowed.wait();
+        return nlohmann::json{{"ok", true}};
+    });
+    auto server = MakeServer(dispatcher);
+
+    auto first = dispatcher.CallAsync("tools/call", nlohmann::json::object());
+    first_task_has_started.wait();
+    auto second = dispatcher.CallAsync("tools/call", nlohmann::json::object());
+    ASSERT_EQ(dispatcher.ThreadPoolPendingTasks(), 1);
+
+    nlohmann::json batch = nlohmann::json::array({
+        {
+            {"jsonrpc", "2.0"},
+            {"method", "tools/call"},
+            {"params", nlohmann::json::object()}
+        }
+    });
+
+    EXPECT_TRUE(server.HandleRequest(batch.dump()).empty());
+
+    allow_tasks.set_value();
+    EXPECT_EQ(first.get().at("ok"), true);
+    EXPECT_EQ(second.get().at("ok"), true);
+}
+
 TEST_F(HttpJsonRpcServerTest, RunsBatchPooledRequestsConcurrently) {
     JsonRpcDispatcher dispatcher;
     dispatcher.EnableThreadPool(2, 4);

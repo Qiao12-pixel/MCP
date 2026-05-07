@@ -6,6 +6,7 @@
 config.json
 secret.json
 settings.json
+/config/server.json
 
 # Python 缓存
 __pycache__/

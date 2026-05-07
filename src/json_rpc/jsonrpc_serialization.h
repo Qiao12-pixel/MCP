@@ -20,6 +20,13 @@ namespace mcp {
 
         void to_json(json& j, const JsonRpcError& err);
         void from_json(const json& j, JsonRpcError& err);
+
+        JsonRpcResponse MakeErrorResponse(const json& id,
+                                          int code,
+                                          const std::string& message,
+                                          std::optional<json> data = std::nullopt);
+        json SerializeResponse(const JsonRpcResponse& res);
+        std::string DumpResponse(const JsonRpcResponse& res);
     }
 }
 

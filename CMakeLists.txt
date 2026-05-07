@@ -14,7 +14,7 @@ find_package(spdlog REQUIRED)
 find_package(CURL REQUIRED)
 find_package(GTest REQUIRED)
 find_package(httplib REQUIRED)
-
+find_package(SQLite3 REQUIRED)
 enable_testing()
 
 add_library(mcp_config
@@ -43,6 +43,21 @@ target_link_libraries(mcp_logger PUBLIC
         spdlog::spdlog
 )
 
+add_library(mcp_sql
+        src/sql/sqlite_database.cpp
+        src/sql/sqlite_database.h
+        src/sql/tool_call_history_repository.cpp
+        src/sql/tool_call_history_repository.h
+)
+
+target_include_directories(mcp_sql PUBLIC
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(mcp_sql PUBLIC
+        SQLite::SQLite3
+)
+
 add_library(mcp_jsonrpc
         src/json_rpc/jsonrpc_types.h
         src/json_rpc/jsonrpc_dispatcher.cpp
@@ -69,19 +84,32 @@ target_include_directories(mcp_jsonrpc PUBLIC
 target_link_libraries(mcp_jsonrpc PUBLIC
         nlohmann_json::nlohmann_json
         httplib::httplib
+        spdlog::spdlog
         mcp_config
         mcp_logger
+        mcp_sql
 )
 
 add_executable(MCP_Server
-        src/mcp_server_main.cpp
+        src/main/mcp_server_main.cpp
+        src/main/server_app.cpp
+        src/main/server_app.h
+        src/main/mcp_builtin_tools.cpp
+        src/main/mcp_builtin_tools.h
+        src/main/mcp_builtin_resources.cpp
+        src/main/mcp_builtin_resources.h
+        src/main/mcp_builtin_prompts.cpp
+        src/main/mcp_builtin_prompts.h
 )
 
 target_link_libraries(MCP_Server PRIVATE
         mcp_jsonrpc
         mcp_config
+        mcp_sql
         CURL::libcurl
         httplib::httplib
+        SQLite::SQLite3
+        spdlog::spdlog
 )
 
 add_executable(config_tests

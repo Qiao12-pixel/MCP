@@ -34,6 +34,13 @@ namespace mcp {
             size_t GetThreadPoolSize() const;
             size_t GetThreadPoolMaxQueueSize() const;
             std::vector<std::string> GetThreadPoolPooledMethods() const;
+
+            std::string GetImageGenerationDefaultProvider() const;
+            std::string GetDoubaoImageApiKey() const;
+            std::string GetDoubaoImageModel() const;
+            std::string GetDoubaoImageApiUrl() const;
+            std::string GetGeminiImageApiKey() const;
+            std::string GetGeminiImageModel() const;
             /**
              * 可扩展获取其他字段方法，具体字段查看config/server.json
              */

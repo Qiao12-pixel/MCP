@@ -41,6 +41,12 @@ namespace mcp {
             std::string GetDoubaoImageApiUrl() const;
             std::string GetGeminiImageApiKey() const;
             std::string GetGeminiImageModel() const;
+
+            std::string GetJobAgentDbPath() const;
+            int GetLbDefaultWeight() const;
+            std::string GetRedisHost() const;
+            int GetRedisPort() const;
+            int GetRedisDb() const;
             /**
              * 可扩展获取其他字段方法，具体字段查看config/server.json
              */

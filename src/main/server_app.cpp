@@ -14,11 +14,15 @@
 #include "config/config.h"
 #include "json_rpc/http_jsonrpc.h"
 #include "json_rpc/stdio_jsonrpc_server.h"
+#include "load_balancer/load_balancer.h"
 #include "logger/logger.h"
 #include "mcp_builtin_prompts.h"
 #include "mcp_builtin_resources.h"
 #include "mcp_builtin_tools.h"
+#include "mcp_job_agent_tools.h"
+#include "mcp_redis_tools.h"
 #include "sql/tool_call_history_repository.h"
+#include "zk/zk_service_registry.h"
 
 namespace mcp {
     namespace {
@@ -61,6 +65,8 @@ namespace mcp {
         RegisterBuiltinTools(mcp_server);
         RegisterBuiltinResources(mcp_server);
         RegisterBuiltinPrompts(mcp_server);
+        RegisterJobAgentTools(mcp_server);
+        RegisterRedisTools(mcp_server);
 
         try {
             auto history_repository =
@@ -229,5 +235,36 @@ namespace mcp {
         if (http_thread.joinable()) {
             http_thread.join();
         }
+    }
+
+    void RunWorkerMode(McpServer& mcp_server, const std::string& host, int port,
+                       const std::string& zk_hosts) {
+        MCP_LOG_INFO("Starting worker mode on {}:{} with ZooKeeper {}", host, port, zk_hosts);
+
+        // Register with ZooKeeper.
+        zk::ZkServiceRegistry zk(zk_hosts);
+        zk.Connect();
+        zk.Register(host, port);
+
+        // Run HTTP server (blocking).
+        RunHttpMode(mcp_server, host, port);
+
+        // Cleanup.
+        zk.Unregister();
+        MCP_LOG_INFO("Worker mode shutdown complete");
+    }
+
+    void RunProxyMode(const std::string& zk_hosts, int proxy_port) {
+        MCP_LOG_INFO("Starting proxy mode on port {} with ZooKeeper {}", proxy_port, zk_hosts);
+
+        int default_weight = 1;
+        try {
+            default_weight = config::MCP_CONFIG.GetLbDefaultWeight();
+        } catch (...) { /* use default */ }
+
+        lb::LoadBalancer lb(proxy_port, zk_hosts, default_weight);
+        lb.Start();
+
+        MCP_LOG_INFO("Proxy mode shutdown complete");
     }
 }

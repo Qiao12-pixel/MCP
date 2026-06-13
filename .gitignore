@@ -7,6 +7,7 @@ config.json
 secret.json
 settings.json
 config/server.json
+config/agent.local.json
 # Python 缓存
 __pycache__/
 *.py[cod]
@@ -15,6 +16,7 @@ __pycache__/
 env/
 venv/
 ENV/
+.venv/
 
 # Node.js
 node_modules/
@@ -35,9 +37,10 @@ Thumbs.db
 # 日志
 logs/
 *.log
+data/
+generated/
 
 # 构建产物
 dist/
 build/
 cmake-build-debug/
-

@@ -107,6 +107,39 @@ namespace mcp {
                 image_generation["default_provider"] = "doubao";
             }
 
+            // set job_agent default
+            if (!m_config_data_.contains("job_agent")) {
+                m_config_data_["job_agent"] = json::object();
+            }
+            auto& job_agent = m_config_data_["job_agent"];
+            if (!job_agent.contains("db_path")) {
+                job_agent["db_path"] = "";
+            }
+
+            // set load_balancer default
+            if (!m_config_data_.contains("load_balancer")) {
+                m_config_data_["load_balancer"] = json::object();
+            }
+            auto& lb = m_config_data_["load_balancer"];
+            if (!lb.contains("default_weight")) {
+                lb["default_weight"] = 1;
+            }
+
+            // set redis default
+            if (!m_config_data_.contains("redis")) {
+                m_config_data_["redis"] = json::object();
+            }
+            auto& redis = m_config_data_["redis"];
+            if (!redis.contains("host")) {
+                redis["host"] = "localhost";
+            }
+            if (!redis.contains("port")) {
+                redis["port"] = 6379;
+            }
+            if (!redis.contains("db")) {
+                redis["db"] = 0;
+            }
+
             if (!image_generation.contains("doubao")) {
                 image_generation["doubao"] = json::object();
             }
@@ -344,6 +377,41 @@ namespace mcp {
                 "model",
                 std::string("gemini-3.1-flash-image-preview")
             );
+        }
+
+        std::string Config::GetJobAgentDbPath() const {
+            if (!m_config_data_.contains("job_agent")) {
+                return "";
+            }
+            return m_config_data_["job_agent"].value("db_path", std::string(""));
+        }
+
+        int Config::GetLbDefaultWeight() const {
+            if (!m_config_data_.contains("load_balancer")) {
+                return 1;
+            }
+            return m_config_data_["load_balancer"].value("default_weight", 1);
+        }
+
+        std::string Config::GetRedisHost() const {
+            if (!m_config_data_.contains("redis")) {
+                return "";
+            }
+            return m_config_data_["redis"].value("host", std::string("localhost"));
+        }
+
+        int Config::GetRedisPort() const {
+            if (!m_config_data_.contains("redis")) {
+                return 6379;
+            }
+            return m_config_data_["redis"].value("port", 6379);
+        }
+
+        int Config::GetRedisDb() const {
+            if (!m_config_data_.contains("redis")) {
+                return 0;
+            }
+            return m_config_data_["redis"].value("db", 0);
         }
 
         // ===================================================================

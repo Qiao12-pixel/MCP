@@ -30,6 +30,9 @@ namespace mcp {
             void Initialize();
             int64_t Insert(const ToolCallRecord& record);
             std::vector<ToolCallRecord> ListRecent(int limit);
+            std::vector<ToolCallRecord> FindRecent(const std::string& tool_name_filter,
+                                                  bool errors_only,
+                                                  int limit);
 
             const std::filesystem::path& DatabasePath() const;
 

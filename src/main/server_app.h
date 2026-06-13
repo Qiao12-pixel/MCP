@@ -18,6 +18,11 @@ namespace mcp {
     void RunHttpMode(McpServer& mcp_server, const std::string& host, int port);
     void RunStdioMode(McpServer& mcp_server);
     void RunBothModes(McpServer& mcp_server, const std::string& host, int port);
+
+    // New modes.
+    void RunWorkerMode(McpServer& mcp_server, const std::string& host, int port,
+                       const std::string& zk_hosts);
+    void RunProxyMode(const std::string& zk_hosts, int proxy_port);
 }
 
 #endif // SERVER_APP_H

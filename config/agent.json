@@ -1,0 +1,38 @@
+{
+  "mcp": {
+    "base_url": "http://localhost:8080"
+  },
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "model": "qwen3.5:4b"
+  },
+  "runtime": {
+    "max_plan_steps": 5,
+    "max_tool_calls_per_step": 4,
+    "max_review_retries": 1
+  },
+  "knowledge_base": {
+    "enabled": true,
+    "paths": [
+      "README.md",
+      "docs",
+      "config",
+      "client/agent_runtime"
+    ],
+    "allowed_suffixes": [
+      ".md",
+      ".txt",
+      ".json",
+      ".py",
+      ".cpp",
+      ".h"
+    ],
+    "chunk_size_chars": 1200,
+    "chunk_overlap_chars": 200,
+    "top_k": 4
+  },
+  "storage": {
+    "sqlite_path": "data/agent_runtime.sqlite3",
+    "langgraph_sqlite_path": "data/langgraph_agent.sqlite3"
+  }
+}

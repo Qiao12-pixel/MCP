@@ -186,6 +186,52 @@ namespace mcp {
             return records;
         }
 
+        std::vector<ToolCallRecord> ToolCallHistoryRepository::FindRecent(const std::string& tool_name_filter,
+                                                                          bool errors_only,
+                                                                          int limit) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            EnsureInitializedLocked();
+
+            const int normalized_limit = std::max(1, std::min(limit, 500));
+            Statement stmt(db_.Handle(), R"SQL(
+                SELECT
+                    id,
+                    tool_name,
+                    arguments_json,
+                    is_error,
+                    result_json,
+                    error_message,
+                    started_at,
+                    finished_at,
+                    duration_ms
+                FROM tool_call_history
+                WHERE (? = '' OR tool_name = ?)
+                  AND (? = 0 OR is_error = 1)
+                ORDER BY id DESC
+                LIMIT ?;
+            )SQL");
+            stmt.BindText(1, tool_name_filter);
+            stmt.BindText(2, tool_name_filter);
+            stmt.BindInt64(3, errors_only ? 1 : 0);
+            stmt.BindInt64(4, normalized_limit);
+
+            std::vector<ToolCallRecord> records;
+            while (stmt.StepRow()) {
+                ToolCallRecord record;
+                record.id = sqlite3_column_int64(stmt.Get(), 0);
+                record.tool_name = ColumnText(stmt.Get(), 1);
+                record.arguments_json = ColumnText(stmt.Get(), 2);
+                record.is_error = sqlite3_column_int64(stmt.Get(), 3) != 0;
+                record.result_json = ColumnText(stmt.Get(), 4);
+                record.error_message = ColumnText(stmt.Get(), 5);
+                record.started_at = ColumnText(stmt.Get(), 6);
+                record.finished_at = ColumnText(stmt.Get(), 7);
+                record.duration_ms = sqlite3_column_int64(stmt.Get(), 8);
+                records.emplace_back(std::move(record));
+            }
+            return records;
+        }
+
         const std::filesystem::path& ToolCallHistoryRepository::DatabasePath() const {
             return db_.Path();
         }

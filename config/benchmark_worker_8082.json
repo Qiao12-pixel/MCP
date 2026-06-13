@@ -1,0 +1,44 @@
+{
+  "server": {
+    "port": 8082
+  },
+  "logging": {
+    "log_file_path": "logs/benchmark_worker_8082.log",
+    "log_level": "warn",
+    "log_file_size": 10485760,
+    "log_file_count": 3,
+    "log_console_output": false
+  },
+  "thread_pool": {
+    "size": 16,
+    "max_queue_size": 128,
+    "pooled_methods": [
+      "tools/call",
+      "resources/read",
+      "prompts/get"
+    ]
+  },
+  "job_agent": {
+    "db_path": "data/benchmark_job_agent_8082.sqlite3"
+  },
+  "load_balancer": {
+    "default_weight": 1
+  },
+  "redis": {
+    "host": "",
+    "port": 6379,
+    "db": 0
+  },
+  "image_generation": {
+    "default_provider": "doubao",
+    "doubao": {
+      "api_key": "",
+      "model": "doubao-seedream-4-5-251128",
+      "api_url": "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+    },
+    "gemini": {
+      "api_key": "",
+      "model": "gemini-3.1-flash-image-preview"
+    }
+  }
+}

@@ -10,9 +10,11 @@ using namespace mcp;
 
 int main(int argc, char* argv[]) {
     std::string config_file = "../config/server.json";
-    std::string mode = "http";
+    std::string mode = "standalone";
     std::string host;
     int port = 0;
+    std::string zk_hosts;
+    int proxy_port = 0;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -24,27 +26,63 @@ int main(int argc, char* argv[]) {
             host = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
             port = std::stoi(argv[++i]);
+        } else if (arg == "--zk-hosts" && i + 1 < argc) {
+            zk_hosts = argv[++i];
+        } else if (arg == "--proxy-port" && i + 1 < argc) {
+            proxy_port = std::stoi(argv[++i]);
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0] << " [OPTIONS]\n"
                       << "Options:\n"
-                      << "  --mode MODE      Server mode: http, stdio, or both (default: http)\n"
-                      << "  --config FILE    Configuration file path\n"
-                      << "  --host HOST      Server host (for HTTP mode)\n"
-                      << "  --port PORT      Server port (for HTTP mode)\n"
-                      << "  --help, -h       Show this help\n"
+                      << "  --mode MODE       Server mode: standalone (default), worker, proxy\n"
+                      << "  --config FILE     Configuration file path\n"
+                      << "  --host HOST       Server host (for HTTP/worker mode)\n"
+                      << "  --port PORT       Server port (for HTTP/worker mode)\n"
+                      << "  --zk-hosts HOSTS  ZooKeeper connection string (for worker/proxy mode)\n"
+                      << "  --proxy-port PORT Proxy listen port (for proxy mode)\n"
+                      << "  --help, -h        Show this help\n"
                       << "\nExamples:\n"
-                      << "  " << argv[0] << " --mode http --port 8080\n"
-                      << "  " << argv[0] << " --mode stdio\n"
-                      << "  " << argv[0] << " --mode both --port 8080\n";
+                      << "  " << argv[0] << " --mode standalone --port 8081\n"
+                      << "  " << argv[0] << " --mode worker --port 8081 --zk-hosts localhost:2181\n"
+                      << "  " << argv[0] << " --mode proxy --proxy-port 8090 --zk-hosts localhost:2181\n";
             return 0;
         }
     }
 
-    if (mode != "http" && mode != "stdio" && mode != "both") {
-        std::cerr << "Invalid mode: " << mode << " (must be http, stdio, or both)" << std::endl;
+    if (mode != "standalone" && mode != "worker" && mode != "proxy") {
+        std::cerr << "Invalid mode: " << mode
+                  << " (must be standalone, worker, or proxy)" << std::endl;
         return 1;
     }
 
+    // Proxy mode doesn't need a full MCP server; it only connects to ZooKeeper.
+    if (mode == "proxy") {
+        if (proxy_port == 0) {
+            std::cerr << "proxy mode requires --proxy-port" << std::endl;
+            return 1;
+        }
+        if (zk_hosts.empty()) {
+            std::cerr << "proxy mode requires --zk-hosts" << std::endl;
+            return 1;
+        }
+
+        MCP_LOG_INIT("mcp_proxy", "logs/proxy.log", 52428800, 5, true);
+        MCP_LOG_SET_LEVEL(spdlog::level::info);
+
+        try {
+            InstallSignalHandlers();
+            RunProxyMode(zk_hosts, proxy_port);
+            MCP_LOG_INFO("Proxy shutdown complete");
+        } catch (const std::exception& e) {
+            MCP_LOG_ERROR("Fatal error: {}", e.what());
+            std::cerr << "Fatal error: " << e.what() << std::endl;
+            return 1;
+        }
+
+        MCP_LOG_SHUTDOWN();
+        return 0;
+    }
+
+    // standalone / worker: load config and start MCP server.
     if (!config::MCP_CONFIG.LoadFromFile(config_file)) {
         std::cerr << "Failed to load config from: " << config_file << std::endl;
         return 1;
@@ -67,12 +105,15 @@ int main(int argc, char* argv[]) {
         ConfigureMcpServer(mcp_server);
         InstallSignalHandlers();
 
-        if (mode == "http") {
+        if (mode == "worker") {
+            if (zk_hosts.empty()) {
+                MCP_LOG_ERROR("worker mode requires --zk-hosts");
+                return 1;
+            }
+            RunWorkerMode(mcp_server, host, port, zk_hosts);
+        } else {
+            // standalone mode (original behavior)
             RunHttpMode(mcp_server, host, port);
-        } else if (mode == "stdio") {
-            RunStdioMode(mcp_server);
-        } else if (mode == "both") {
-            RunBothModes(mcp_server, host, port);
         }
 
         MCP_LOG_INFO("Server shutdown complete");

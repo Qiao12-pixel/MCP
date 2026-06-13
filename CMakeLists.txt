@@ -8,6 +8,8 @@ set(CMAKE_OSX_ARCHITECTURES arm64)
 # 加载 Conan
 include(${CMAKE_BINARY_DIR}/build/Debug/generators/conan_toolchain.cmake)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
 find_package(Threads REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
@@ -15,6 +17,8 @@ find_package(CURL REQUIRED)
 find_package(GTest REQUIRED)
 find_package(httplib REQUIRED)
 find_package(SQLite3 REQUIRED)
+find_package(ZooKeeper REQUIRED)
+find_package(Hiredis REQUIRED)
 enable_testing()
 
 add_library(mcp_config
@@ -90,12 +94,117 @@ target_link_libraries(mcp_jsonrpc PUBLIC
         mcp_sql
 )
 
+add_library(mcp_builtin_tools_lib
+        src/main/mcp_builtin_tools.cpp
+        src/main/mcp_builtin_tools.h
+)
+
+target_include_directories(mcp_builtin_tools_lib PUBLIC
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(mcp_builtin_tools_lib PUBLIC
+        mcp_jsonrpc
+        mcp_config
+        CURL::libcurl
+)
+
+add_library(mcp_job_agent_tools_lib
+        src/main/mcp_job_agent_tools.cpp
+        src/main/mcp_job_agent_tools.h
+        src/job_agent/job_agent_database.cpp
+        src/job_agent/job_agent_database.h
+)
+
+target_include_directories(mcp_job_agent_tools_lib PUBLIC
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(mcp_job_agent_tools_lib PUBLIC
+        mcp_jsonrpc
+        mcp_config
+        mcp_sql
+)
+
+# ---------------------------------------------------------------------------
+# ZooKeeper service registry
+# ---------------------------------------------------------------------------
+add_library(mcp_zk
+        src/zk/zk_service_registry.cpp
+        src/zk/zk_service_registry.h
+)
+
+target_include_directories(mcp_zk PUBLIC
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_compile_options(mcp_zk PRIVATE -Wno-deprecated-declarations)
+target_link_libraries(mcp_zk PUBLIC
+        ZooKeeper::zookeeper_mt
+        mcp_logger
+)
+
+# ---------------------------------------------------------------------------
+# Load Balancer
+# ---------------------------------------------------------------------------
+add_library(mcp_lb
+        src/load_balancer/load_balancer.cpp
+        src/load_balancer/load_balancer.h
+)
+
+target_include_directories(mcp_lb PUBLIC
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(mcp_lb PUBLIC
+        mcp_jsonrpc
+        mcp_zk
+        httplib::httplib
+)
+
+# ---------------------------------------------------------------------------
+# Redis cache
+# ---------------------------------------------------------------------------
+add_library(mcp_redis
+        src/redis/redis_cache.cpp
+        src/redis/redis_cache.h
+)
+
+target_include_directories(mcp_redis PUBLIC
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(mcp_redis PUBLIC
+        Hiredis::hiredis
+        mcp_logger
+)
+
+add_library(mcp_redis_tools_lib
+        src/main/mcp_redis_tools.cpp
+        src/main/mcp_redis_tools.h
+)
+
+target_include_directories(mcp_redis_tools_lib PUBLIC
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(mcp_redis_tools_lib PUBLIC
+        mcp_jsonrpc
+        mcp_redis
+        mcp_config
+)
+
+# ---------------------------------------------------------------------------
+# MCP_Server executable
+# ---------------------------------------------------------------------------
 add_executable(MCP_Server
         src/main/mcp_server_main.cpp
         src/main/server_app.cpp
         src/main/server_app.h
-        src/main/mcp_builtin_tools.cpp
-        src/main/mcp_builtin_tools.h
         src/main/mcp_builtin_resources.cpp
         src/main/mcp_builtin_resources.h
         src/main/mcp_builtin_prompts.cpp
@@ -104,8 +213,13 @@ add_executable(MCP_Server
 
 target_link_libraries(MCP_Server PRIVATE
         mcp_jsonrpc
+        mcp_builtin_tools_lib
+        mcp_job_agent_tools_lib
+        mcp_redis_tools_lib
         mcp_config
         mcp_sql
+        mcp_zk
+        mcp_lb
         CURL::libcurl
         httplib::httplib
         SQLite::SQLite3
@@ -179,6 +293,16 @@ target_link_libraries(http_jsonrpc_tests PRIVATE
         GTest::gtest_main
 )
 
+add_executable(builtin_tools_tests
+        tests/builtin_tools_test.cpp
+)
+
+target_link_libraries(builtin_tools_tests PRIVATE
+        mcp_builtin_tools_lib
+        mcp_logger
+        GTest::gtest_main
+)
+
 include(GoogleTest)
 gtest_discover_tests(config_tests)
 gtest_discover_tests(logger_tests)
@@ -187,3 +311,4 @@ gtest_discover_tests(thread_pool_tests)
 gtest_discover_tests(mcp_types_tests)
 gtest_discover_tests(mcp_server_tests)
 gtest_discover_tests(http_jsonrpc_tests)
+gtest_discover_tests(builtin_tools_tests)
